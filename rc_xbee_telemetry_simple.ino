@@ -19,32 +19,22 @@ static void print_date(TinyGPS &gps);
 static void print_str(const char *str, int len);
 
 //pins
-int xPin = A0;    // select the input pin for the potentiometer
-int yPin = A1;    // select the input pin for the potentiometer
-int zPin = A2;    // select the input pin for the potentiometer
+int xPin = A0;    // x
+int yPin = A1;    // y
+int zPin = A2;    // z
 int xVal;
 int yVal;
 int zVal;
-int battPin = A5;    // select the input pin for the potentiometer
+int battPin = A5;    // pin on which we can measure half the battery's voltage
 
-//mostFrequentlyChanged
-boolean sleepCycling = true;
-boolean pinging = false;
 //constants
 float vRef = 3.30;
 float vLow = 3.66; //if battery voltage drops below this level, trigger low voltage alarm.
 int pingDelay = 5000;
-int sleepDuration = 12000;
-int wakePeriod = 3000; //awake for this duration before going back to sleep.
 //variables
-unsigned long theTime = millis();
-unsigned long sleepTime = millis();
-unsigned long wakeTime = millis();
-unsigned long pingTime = theTime + pingDelay;
-boolean sleeping = false;
-boolean awake = false;
+unsigned long pingTime = millis() + pingDelay;
 //led
-unsigned long lsct = theTime;
+unsigned long lsct = millis();
 boolean ledIS = false; //the state the user wants the led to be.
 boolean ledState = ledIS;
 boolean ledBlink = false;
@@ -52,7 +42,7 @@ int ledBTon = 333;
 int ledBToff = 222;
 //gps
 boolean gpsState = false;
-boolean gpsOnly = true; //display only gps info at ping?
+boolean gpsOnly = false; //display only gps info at ping?
 //battery
 float battValue = 0.0;  // variable to store the value coming from the sensor
 float theVoltage;
@@ -60,8 +50,7 @@ boolean lowBatt = false;
 boolean lowBattInd = true; //indicate low battery?
 //accel
 boolean rA = true; //reads accel by default.
-boolean pA = false; //prints accel values at regular ping
-String orientation = "o:notset";
+
 //command
 String iD = ""; //incoming data stored as string
 boolean clearCMD = false;
@@ -73,10 +62,10 @@ void setup() {
   pinMode(zPin, INPUT);
   pinMode(battPin, INPUT);
   
-  //turn on xbee
+  //configure xbee
   pinMode(5, OUTPUT);
   digitalWrite(5, HIGH);
-  //turn on gps
+  //configure gps
   pinMode(6, OUTPUT);
   digitalWrite(6, HIGH);
   delay(666);
@@ -90,8 +79,8 @@ void setup() {
   delay(66);
   
   // declare the ledPin as an OUTPUT:
-  Serial.begin(9600);
-  Serial.println("Meow.");
+  Serial.begin(57600);
+  Serial.println("Ready.");
   pinMode(13, OUTPUT);
   digitalWrite(13, HIGH);
 }
@@ -100,8 +89,6 @@ void readAccel() {
   xVal = analogRead(xPin);
   yVal = analogRead(yPin);
   zVal = analogRead(zPin);
-  
-  orientation = "o:" + (String)zVal;
 }
 
 void readBatt() {
@@ -130,19 +117,20 @@ void gpsPower(boolean gpsPwr) {
     Serial.println("gps OFF");
   }
 }
+
 void led() {
   if(lowBatt) {
     ledBTon = 6;
     ledBToff = 666;
   }
   if(ledBlink || lowBatt) {
-    if(theTime > lsct) {
+    if(millis() > lsct) {
       if(ledState) {
         ledState = false;
-        lsct = theTime + ledBToff;
+        lsct = millis() + ledBToff;
       } else {
         ledState = true;
-        lsct = theTime + ledBTon;
+        lsct = millis() + ledBTon;
       }
     }  
   }
@@ -157,7 +145,6 @@ void interpret(String cmd) {
   //Serial.println(cmd);
   if(cmd == "blink") {
     if(!ledBlink) {
-      //blinkkitty on
       ledBTon = 333;
       ledBToff = 222;
       ledBlink = true;
@@ -175,16 +162,6 @@ void interpret(String cmd) {
       gpsPower(false);
       gpsState = false;
     }
-  } else if (cmd == "batt") {
-    if(!lowBattInd) {
-      lowBattInd = true;
-      Serial.println("lowbatt indicator ON");
-    } else {
-      lowBattInd = false;
-      lowBatt = false;
-      ledState = ledIS;
-      Serial.println("lowbatt indicator OFF");
-    }
   } else if (cmd == "led") {
     if(ledIS) {
       ledIS = false;
@@ -195,135 +172,12 @@ void interpret(String cmd) {
       ledState = ledIS;
       Serial.println("led ON");
     }
-  } else if (cmd == "sleep") {
-    pinging = false;
-    Serial.println("sleeping...");
-    delay(666);
-    sleepCycling = true;
-  } else if (cmd == "s") {
-    sleepCycling = false;
-    Serial.println("sleep OFF");
-  } else if (cmd == "ping") {
-    if(pinging) {
-      pinging = false;
-      Serial.println("NOping");
-    } else {
-      pinging = true;
-      Serial.println("pinging");
-    }
-  } else if (cmd == "pa") {
-    if(pA) {
-      pA = false;
-      Serial.println("pA OFF");
-    } else {
-      pA = true;
-      Serial.println("pA ON");
-    }
-  } else if (cmd == "ra") {
-    if(rA) {
-      rA = false;
-      digitalWrite(10, LOW); //turns off elsewhere aswell, make sure to check.
-      Serial.println("accel OFF");
-    } else {
-      rA = true;
-      digitalWrite(10, HIGH);
-      Serial.println("accel ON");
-    }
-  } else if (cmd == "slow") {
-    //ping every five seconds
-    pingDelay = 5000;
-    Serial.println(pingDelay);
-  } else if (cmd == "fast") {
-    //ping every second
-    pingDelay = 1000;
-    Serial.println(pingDelay);
-  } else if (cmd == "gpsonly") {
-    if(gpsOnly) {
-      gpsOnly = false;
-      Serial.println("no gpsonly");
-    } else {
-      gpsOnly = true;
-      Serial.println("gpsonly");
-    }
   }
   
   clearCMD = true;
   //Serial.println("finCMD");
 }
-void ping() {
-  if(lowBatt) {
-    Serial.print("LOWBATT");
-  }
-  if(!gpsOnly || !gpsState) {
-      Serial.print("Meow! ");
-      
-      Serial.print(theVoltage);
-      //Serial.print(", ");
-      
-      if(ledBlink){
-        Serial.print(", blinking");
-      } else if (ledIS) {
-        Serial.print(", ledON");
-      }
-      
-      if(theTime >= 60000) {
-        int aliveTime = theTime / 60000;
-        Serial.print(", ");
-        Serial.print(aliveTime);
-        Serial.print(" M");
-      }
-      
-      if(rA && !pA) {
-        Serial.print(", ");
-        Serial.print(orientation);
-      } else if (pA) {
-        Serial.println("");
-        Serial.print("x: ");
-        Serial.print(xVal);
-        Serial.print(", y: ");
-        Serial.print(yVal);
-        Serial.print(", z: ");
-        Serial.print(zVal);
-        Serial.println("");
-      } 
-      
-      if(gpsState) {
-        Serial.println("");
-        gpsdump(gps);
-      } else {
-        Serial.println("");
-      }
-  } else {
-    gpsdump(gps);
-  }      
-      
-}
-void sleepWake() {
-  if(sleeping) {
-    if(theTime > sleepTime) {
-      digitalWrite(5, HIGH); //turn on radio
-      digitalWrite(10, HIGH); //turn on accel
-      
-      delay(666); //wait a moment.
-    
-      //Serial.println("AWAKE");
-      
-      ping();
-      
-      sleeping = false;
-      wakeTime = millis() + wakePeriod; //sets the period for which to listen for incoming commands.
-    }
-  } else {
-    //not in sleep mode
-    if(theTime > wakeTime) {
-      digitalWrite(5, LOW); //turn radio OFF
-      digitalWrite(6, LOW); //turn gps OFF
-      digitalWrite(10, LOW); //turn accel OFF
-      sleepTime = theTime + sleepDuration;
-      sleeping = true;
-    }
-  }
-}
+
 
 void rSer() {
   while(Serial.available() > 0) {
@@ -344,23 +198,6 @@ void loop() {
   rSer(); //read incoming serial
   led();
   readBatt();
-  theTime = millis();
-  
-  if(rA && !sleeping) {
-    //read accelerometer
-    readAccel();
-  } else if (!rA) {
-    digitalWrite(10, LOW); //turn accel off
-  }
-  
-  if (pinging) {
-    if(theTime > pingTime) {
-      ping();
-      pingTime = theTime + pingDelay;
-    }
-  } else if (sleepCycling) {
-    sleepWake();
-  }
   
   if(gpsState) {
     bool newdata = false;
