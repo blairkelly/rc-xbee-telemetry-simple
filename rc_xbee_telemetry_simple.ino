@@ -22,9 +22,6 @@ static void print_str(const char *str, int len);
 int xPin = A0;    // x
 int yPin = A1;    // y
 int zPin = A2;    // z
-int xVal;
-int yVal;
-int zVal;
 int battPin = A5;    // pin on which we can measure half the battery's voltage
 
 //constants
@@ -32,7 +29,13 @@ float vRef = 3.30;
 float vLow = 3.66; //if battery voltage drops below this level, trigger low voltage alarm.
 int pingDelay = 5000;
 //variables
-unsigned long pingTime = millis() + pingDelay;
+//serial
+String usbInstructionDataString = "";
+int usbCommandVal = 0;
+boolean USBcommandExecuted = true;
+String usbCommand = "";
+unsigned long lastcmdtime = millis();
+int maxcmdage = 333; //max time in milliseconds arduino will wait before switching to some defaults
 //led
 unsigned long lsct = millis();
 boolean ledIS = false; //the state the user wants the led to be.
@@ -48,13 +51,24 @@ float battValue = 0.0;  // variable to store the value coming from the sensor
 float theVoltage;
 boolean lowBatt = false;
 boolean lowBattInd = true; //indicate low battery?
-//accel
-boolean rA = true; //reads accel by default.
-
 //command
 String iD = ""; //incoming data stored as string
 boolean clearCMD = false;
-
+//ffb
+unsigned long accelCheckTime;
+const int accelAVGarraySize = 14;
+int accel1avgXarray[accelAVGarraySize];
+int accel1avgYarray[accelAVGarraySize];
+int accel1avgZarray[accelAVGarraySize];
+int accel1counter = 0;  //keeps track of where we are in the accel1 average arrays, used for determining what the average of the last 100 readings have been.
+int maffa = 27;
+int minAccelFFamplitudeX = maffa;
+int minAccelFFamplitudeY = maffa;
+int minAccelFFamplitudeZ = maffa;
+int lastAXdifference = 0;  //what was the last accelerometer difference?
+int lastAYdifference = 0;  //what was the last accelerometer difference?
+int lastAZdifference = 0;  //what was the last accelerometer difference?
+int accelCheckDelay = 16; //milliseconds between accel checks.
 
 void setup() {
   pinMode(xPin, INPUT);
@@ -85,10 +99,9 @@ void setup() {
   digitalWrite(13, HIGH);
 }
 
-void readAccel() {
-  xVal = analogRead(xPin);
-  yVal = analogRead(yPin);
-  zVal = analogRead(zPin);
+void pc(String cmd, int cmdval) {
+  Serial.print(cmd);
+  Serial.println(cmdval);
 }
 
 void readBatt() {
@@ -110,11 +123,11 @@ void gpsPower(boolean gpsPwr) {
   if (gpsPwr) {
     digitalWrite(6, HIGH);
     delay(333);
-    Serial.println("gps ON");
-    Serial.print("Sizeof(gpsobject) = "); Serial.println(sizeof(TinyGPS));
+    //Serial.println("gps ON");
+    //Serial.print("Sizeof(gpsobject) = "); Serial.println(sizeof(TinyGPS));
   } else {
     digitalWrite(6, LOW);
-    Serial.println("gps OFF");
+    //Serial.println("gps OFF");
   }
 }
 
@@ -140,65 +153,138 @@ void led() {
     digitalWrite(13, LOW);
   }
 }
-void interpret(String cmd) {
-  //Serial.print("Command Received: ");
-  //Serial.println(cmd);
-  if(cmd == "blink") {
-    if(!ledBlink) {
-      ledBTon = 333;
-      ledBToff = 222;
-      ledBlink = true;
-      Serial.println("blink");
+
+
+void delegate(String cmd, int cmdval) {
+  if (cmd.equals("B")) {
+      //example
+  }
+}
+void serialListen()
+{
+  char arduinoSerialData; //FOR CONVERTING BYTE TO CHAR. here is stored information coming from the arduino.
+  String currentChar = "";
+  if(Serial.available() > 0) {
+    arduinoSerialData = char(Serial.read());   //BYTE TO CHAR.
+    currentChar = (String)arduinoSerialData; //incoming data equated to c.
+    if(!currentChar.equals("1") && !currentChar.equals("2") && !currentChar.equals("3") && !currentChar.equals("4") && !currentChar.equals("5") && !currentChar.equals("6") && !currentChar.equals("7") && !currentChar.equals("8") && !currentChar.equals("9") && !currentChar.equals("0") && !currentChar.equals(".")) { 
+      //the character is not a number, not a value to go along with a command,
+      //so it is probably a command.
+      if(!usbInstructionDataString.equals("")) {
+        //usbCommandVal = Integer.parseInt(usbInstructionDataString);
+        char charBuf[30];
+        usbInstructionDataString.toCharArray(charBuf, 30);
+        usbCommandVal = atoi(charBuf);
+      }
+      if((USBcommandExecuted == false) && (arduinoSerialData == 13)) {
+        delegate(usbCommand, usbCommandVal);
+        USBcommandExecuted = true;
+        lastcmdtime = millis();
+      }
+      if((arduinoSerialData != 13) && (arduinoSerialData != 10)) {
+        usbCommand = currentChar;
+      }
+      usbInstructionDataString = "";
     } else {
-      ledBlink = false;
-      ledState = ledIS;
-      Serial.println("noblink");
-    }
-  } else if (cmd == "gps") {
-    if(!gpsState) {
-      gpsPower(true);
-      gpsState = true;
-    } else {
-      gpsPower(false);
-      gpsState = false;
-    }
-  } else if (cmd == "led") {
-    if(ledIS) {
-      ledIS = false;
-      ledState = ledIS;
-      Serial.println("led OFF");
-    } else {
-      ledIS = true;
-      ledState = ledIS;
-      Serial.println("led ON");
+      //in this case, we're probably receiving a command value.
+      //store it
+      usbInstructionDataString = usbInstructionDataString + currentChar;
+      USBcommandExecuted = false;
     }
   }
-  
-  clearCMD = true;
-  //Serial.println("finCMD");
+
+  //int cmdage = millis() - lastcmdtime;
+  //if(cmdage > maxcmdage) {
+  //  servoWheel.writeMicroseconds(wheeldefault_uS);  // wheel default.
+  //  servoThrottle.writeMicroseconds(throttledefault_uS);  // throttle default.
+  //}
 }
 
-
-void rSer() {
-  while(Serial.available() > 0) {
-    char c = Serial.read();
-    if(c == 0x0D) {
-      interpret(iD);  //send char to the interpret function.
-    } else {
-      iD += (String)c; //incoming data equated to c.
-      if(clearCMD) {
-        iD = "";
-        clearCMD = false;
-      }
-    }
+void ffb() {
+  unsigned long theTime = millis();
+  if(theTime > accelCheckTime) {
+     int accelX = analogRead(xPin);    // read accel's X value
+     int accelY = analogRead(yPin);    // read accel's Y value
+     int accelZ = analogRead(zPin);    // read accel's Z value
+     
+     //minAccelFFamplitude
+     int accelXaverage = 0;
+     int accelYaverage = 0;
+     int accelZaverage = 0;
+     accel1avgXarray[accel1counter] = accelX; //put X reading into array
+     accel1avgYarray[accel1counter] = accelY; //put Y reading into array
+     accel1avgZarray[accel1counter] = accelZ; //put Z reading into array
+     accel1counter++;
+     if(accel1counter > accelAVGarraySize) {
+       accel1counter = 0;
+     }
+     for(int a = 0; a<accelAVGarraySize; a++) {
+         //add together, to update average...
+         accelXaverage = accelXaverage + accel1avgXarray[a];
+         accelYaverage = accelYaverage + accel1avgYarray[a];
+         accelZaverage = accelZaverage + accel1avgZarray[a];
+     }
+     accelXaverage = accelXaverage / accelAVGarraySize;
+     accelYaverage = accelYaverage / accelAVGarraySize;
+     accelZaverage = accelZaverage / accelAVGarraySize;
+     
+     //now find out if there's enough of a disturbance to report...
+     int aXdifference = 0;
+     int aYdifference = 0;
+     int aZdifference = 0;
+     //determine if X reading is out of range
+     int accelUnder = accelXaverage - minAccelFFamplitudeX;
+     int accelOver = accelXaverage + minAccelFFamplitudeX;
+     if(accelX <= accelUnder) {
+       aXdifference = accelXaverage - accelX;
+     } else if (accelX >= accelOver) {
+       aXdifference = accelX - accelXaverage;
+     }
+     //determine if Y reading is out of range
+     accelUnder = accelYaverage - minAccelFFamplitudeY;
+     accelOver = accelYaverage + minAccelFFamplitudeY;
+     if(accelY <= accelUnder) {
+       aYdifference = accelYaverage - accelY;
+     } else if (accelY >= accelOver) {
+       aYdifference = accelY - accelYaverage;
+     }
+     //determine if Z reading is out of range
+     accelUnder = accelZaverage - minAccelFFamplitudeZ;
+     accelOver = accelZaverage + minAccelFFamplitudeZ;
+     if(accelZ <= accelUnder) {
+       aZdifference = accelZaverage - accelZ;
+     } else if (accelZ >= accelOver) {
+       aZdifference = accelZ - accelZaverage;
+     }
+     
+     //X
+     if(aXdifference != lastAXdifference) {
+       //the affXresult has changed, send to host.
+       pc("<", aXdifference); //ptb(0x3C); //print "<" to spi uart, for X
+       lastAXdifference = aXdifference;
+     }
+     //Y
+     if(aYdifference != lastAYdifference) {
+       //the affZresult has changed, send to host.
+       pc(">", aYdifference); //ptb(0x3E); //print ">", for Y
+       lastAYdifference = aYdifference;
+     }
+     //Z
+     if(aZdifference != lastAZdifference) {
+       //the affZresult has changed, send to host.
+       pc("^", aZdifference); //ptb(0x5E); //print "^", for Z.
+       lastAZdifference = aZdifference;
+     }
+     accelCheckTime = theTime + accelCheckDelay;
   }
 }
 
 void loop() {
-  rSer(); //read incoming serial
+  serialListen();
   led();
   readBatt();
-  
+  ffb();
+
   if(gpsState) {
     bool newdata = false;
     if (feedgps()) {
